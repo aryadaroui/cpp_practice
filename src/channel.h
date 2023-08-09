@@ -1,4 +1,6 @@
 #include "primitive_types.h"
+#include <chrono>
+#include <iomanip>
 #include <iostream>
 
 template<typename T>
@@ -12,12 +14,30 @@ class Channel {
 	u32 head	   = 0;
 	u32 tail	   = 0;
 
+	std::condition_variable not_full;
+	std::condition_variable not_empty;
+
 	void incr_head() {
 		head = (head + 1) % buffer_length;
 	}
 
 	void incr_tail() {
 		tail = (tail + 1) % buffer_length;
+	}
+
+	void push(const T &data) {
+		buffer[tail] = std::make_unique<T>(data);
+		incr_tail();
+		num_filled++;
+		not_empty.notify_one();
+	}
+
+	std::unique_ptr<T> pop() {
+		auto data = std::move(buffer[head]);
+		incr_head();
+		num_filled--;
+		not_full.notify_one();
+		return data;
 	}
 
   public:
@@ -33,7 +53,7 @@ class Channel {
 		for(u32 i = 0; i < channel.buffer_length; i++) {
 			os << "\n  " << i << ": ";
 			if(channel.buffer[i] == nullptr) {
-				os << "nullptr";
+				os << "⍉";
 			} else {
 				if constexpr(std::is_same<T, string>::value) {
 					os << *channel.buffer[i];
@@ -51,22 +71,42 @@ class Channel {
 		return buffer_length;
 	}
 
-	void push(std::unique_ptr<T> &&data) {
+	void push_throw(const T &data) {
 		std::lock_guard<std::mutex> lock(mutex);
 
 		if(num_filled == buffer_length) {
 			throw std::overflow_error("Channel is full");
 		}
-		buffer[tail] = std::move(data);
-		incr_tail();
-		num_filled++;
+		push(data);
 	}
 
-	void push(const T &data) {
-		push(std::move(std::make_unique<T>(data)));
+	void push_wait(const T &data) {
+		std::unique_lock<std::mutex> lock(mutex);
+		not_full.wait(lock, [this] { return num_filled < buffer_length; });
+		push(data);
 	}
 
-	std::unique_ptr<T> pop() {
+	void push_spin(const T &data, const u32 &spin_timeout = 1) {
+		auto start_time	  = std::chrono::high_resolution_clock::now();
+		auto elapsed_time = std::chrono::high_resolution_clock::now() - start_time;
+
+		while(true) {
+			if(num_filled < buffer_length) {
+				std::lock_guard<std::mutex> lock(mutex);
+				push(data);
+				return;
+			}
+
+			elapsed_time = std::chrono::high_resolution_clock::now() - start_time;
+			if(elapsed_time > std::chrono::milliseconds(spin_timeout)) {
+				push_wait(data);
+				return;
+			}
+			// std::this_thread::yield();
+		}
+	}
+
+	std::unique_ptr<T> pop_throw() {
 		std::lock_guard<std::mutex> lock(mutex);
 		if(num_filled == 0) {
 			throw std::underflow_error("Channel is empty");
@@ -75,6 +115,29 @@ class Channel {
 		incr_head();
 		num_filled--;
 		return data;
+	}
+
+	std::unique_ptr<T> pop_wait() {
+		std::unique_lock<std::mutex> lock(mutex);
+		not_empty.wait(lock, [this] { return num_filled > 0; });
+		return pop();
+	}
+
+	std::unique_ptr<T> pop_spin(const u32 &spin_timeout = 1) {
+		auto start_time	  = std::chrono::high_resolution_clock::now();
+		auto elapsed_time = std::chrono::high_resolution_clock::now() - start_time;
+
+		while(true) {
+			if(num_filled > 0) {
+				std::lock_guard<std::mutex> lock(mutex);
+				return pop();
+			}
+
+			elapsed_time = std::chrono::high_resolution_clock::now() - start_time;
+			if(elapsed_time > std::chrono::milliseconds(spin_timeout)) {
+				return pop_wait();
+			}
+		}
 	}
 
 	~Channel() {
