@@ -26,7 +26,7 @@ class Channel {
 	}
 
 	void push(const T &data) {
-		buffer[tail] = std::make_unique<T>(data);
+		buffer[tail] = std::make_unique<T>(data); // this makes a copy of data!
 		incr_tail();
 		num_filled++;
 		not_empty.notify_one();
@@ -102,7 +102,6 @@ class Channel {
 				push_wait(data);
 				return;
 			}
-			// std::this_thread::yield();
 		}
 	}
 

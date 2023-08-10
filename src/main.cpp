@@ -7,7 +7,7 @@
 static auto pp = PrettyPrint();
 
 void push(Channel<u8> &channel) {
-	for(u32 i = 0; i < 10; i++) {
+	for(u8 i = 0; i < 10; i++) {
 		pp.print("pushing: ", i, "\n");
 		channel.push_wait(i);
 		pp.print(channel, "\n");
@@ -15,7 +15,7 @@ void push(Channel<u8> &channel) {
 }
 
 void pop(Channel<u8> &channel) {
-	for(u32 i = 0; i < 10; i++) {
+	for(u8 i = 0; i < 10; i++) {
 		u8 val = *(channel.pop_wait());
 		pp.print("popped: ", val, "\n");
 		pp.print(channel, "\n");
